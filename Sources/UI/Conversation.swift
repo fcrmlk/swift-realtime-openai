@@ -13,7 +13,7 @@ public enum ConversationError: Error {
 public final class Conversation: @unchecked Sendable {
 	public typealias SessionUpdateCallback = (inout Session) -> Void
 
-	private let client: WebRTCConnector
+    private let client: WebRTCConnector
 	private var task: Task<Void, Error>!
 	private let sessionUpdateCallback: SessionUpdateCallback?
 	private let errorStream: AsyncStream<ServerError>.Continuation
@@ -156,7 +156,22 @@ public final class Conversation: @unchecked Sendable {
 		try send(event: .createResponse(using: response))
 	}
 
-	/// Send the response of a function call.
+	/// Send an image + text message and wait for a response.
+    public func send(from role: Item.Message.Role, text: String, image: Data, response: Response.Config? = nil) throws {
+        let dataURI = "data:image/jpeg;base64,\(image.base64EncodedString())"
+        let message = Item.Message(
+            id: String(randomLength: 32),
+            role: role,
+            content: [
+                .inputText(text),
+                .inputImage(dataURI)
+            ]
+        )
+        try send(event: .createConversationItem(.message(message)))
+        try send(event: .createResponse(using: response))
+    }
+
+    /// Send the response of a function call.
 	public func send(result output: Item.FunctionCallOutput) throws {
 		try send(event: .createConversationItem(.functionCallOutput(output)))
 	}
