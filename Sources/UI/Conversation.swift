@@ -157,15 +157,12 @@ public final class Conversation: @unchecked Sendable {
 	}
 
 	/// Send an image + text message and wait for a response.
-    public func send(from role: Item.Message.Role, text: String, image: Data, response: Response.Config? = nil) throws {
+    public func send(from role: Item.Message.Role, image: Data, response: Response.Config? = nil) throws {
         let dataURI = "data:image/jpeg;base64,\(image.base64EncodedString())"
         let message = Item.Message(
             id: String(randomLength: 32),
             role: role,
-            content: [
-                .inputText(text),
-                .inputImage(dataURI)
-            ]
+            content: [.inputImage(dataURI)]
         )
         try send(event: .createConversationItem(.message(message)))
         try send(event: .createResponse(using: response))
