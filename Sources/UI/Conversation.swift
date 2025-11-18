@@ -152,15 +152,17 @@ public final class Conversation: @unchecked Sendable {
 	/// Send a text message and wait for a response.
 	/// Optionally, you can provide a response configuration to customize the model's behavior.
 	public func send(from role: Item.Message.Role, text: String, response: Response.Config? = nil) throws {
-		try send(event: .createConversationItem(.message(Item.Message(id: String(randomLength: 32), role: role, content: [.inputText(text)]))))
+		let id = UUID().uuidString.replacingOccurrences(of: "-", with: "") // random 32 character string
+		try send(event: .createConversationItem(.message(Item.Message(id: id, role: role, content: [.inputText(text)]))))
 		try send(event: .createResponse(using: response))
 	}
 
 	/// Send an image + text message and wait for a response.
     public func send(from role: Item.Message.Role, image: Data, response: Response.Config? = nil) throws {
         let dataURI = "data:image/jpeg;base64,\(image.base64EncodedString())"
+        let id = UUID().uuidString.replacingOccurrences(of: "-", with: "") // random 32 character string
         let message = Item.Message(
-            id: String(randomLength: 32),
+            id: id,
             role: role,
             content: [.inputImage(dataURI)]
         )
@@ -188,7 +190,8 @@ private extension Conversation {
 				if let sessionUpdateCallback { try updateSession(withChanges: sessionUpdateCallback) }
 			case let .sessionUpdated(_, session):
 				self.session = session
-			case let .conversationItemCreated(_, item, _):
+			case let .conversationItemCreated(_, item, _),
+				let .conversationItemAdded(_, item, _):
 				entries.append(item)
 			case let .conversationItemDeleted(_, itemId):
 				entries.removeAll { $0.id == itemId }
