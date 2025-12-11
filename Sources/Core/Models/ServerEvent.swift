@@ -541,7 +541,7 @@ extension ServerEvent: Identifiable {
 			case let .conversationItemDone(id, _, _): id
 			case let .conversationItemRetrieved(id, _): id
 			case let .conversationItemInputAudioTranscriptionCompleted(id, _, _, _, _, _): id
-			case let .conversationItemInputAudioTranscriptionDelta(id, _, _, _, _): id
+			case let .conversationItemInputAudioTranscriptionDelta(id, _, _, _, _,_): id
 			case let .conversationItemInputAudioTranscriptionSegment(id, _, _, _, _, _, _, _): id
 			case let .conversationItemInputAudioTranscriptionFailed(id, _, _, _): id
 			case let .conversationItemTruncated(id, _, _, _): id

@@ -260,6 +260,14 @@ private extension Conversation {
                 guard case let .audio(audio) = message.content[contentIndex] else { return }
                 message.content[contentIndex] = .audio(.init(audio: (audio.audio?.data ?? Data()) + delta.data, transcript: audio.transcript))
             }
+        case let .conversationItemInputAudioTranscriptionDelta(_, itemId, contentIndex, delta, _):
+            updateEvent(id: itemId) { message in
+                guard case let .inputAudio(audio) = message.content[contentIndex] else { return }
+                
+                message.content[contentIndex] = .inputAudio(
+                    .init(audio: audio.audio, transcript: audio.transcript ?? "" + delta)
+                )
+            }
         case let .responseFunctionCallArgumentsDelta(_, _, itemId, _, _, delta):
             updateEvent(id: itemId) { functionCall in
                 functionCall.arguments.append(delta)
