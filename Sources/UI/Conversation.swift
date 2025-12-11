@@ -198,10 +198,7 @@ private extension Conversation {
                 entries.insert(item, at: entryIndex + 1)
             } else {
                 entries.append(item)
-            }
-            
-            
-        case let .conversationItemCreated(_, item, nil):
+            }        case let .conversationItemCreated(_, item, nil):
             entries.append(item)
         case let .conversationItemCreated(_, item, previousItemId?):
             if let entryIndex = entries.firstIndex(where: { $0.id == previousItemId }) {
