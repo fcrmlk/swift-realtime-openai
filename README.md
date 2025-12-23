@@ -39,64 +39,102 @@ import SwiftUI
 import RealtimeAPI
 
 struct ContentView: View {
-	@State private var newMessage: String = ""
-	@State private var conversation = Conversation()
-
-	var messages: [Item.Message] {
-		conversation.entries.compactMap { switch $0 {
-			case let .message(message): return message
-			default: return nil
-		} }
-	}
-
-	var body: some View {
-		VStack(spacing: 0) {
-			ScrollView {
+    @State private var newMessage: String = ""
+    @State private var conversation = Conversation(debug: true) { session in
+        session.audio.input.transcription = .init(
+            model: .whisper,
+            language: "en"
+        )
+        session.instructions = "Always talk in ENGLISH Language no matters what!"
+    }
+    
+    var messages: [Item.Message] {
+        conversation.entries.compactMap { switch $0 {
+        case let .message(message): return message
+        default: return nil
+        } }
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
                 VStack(spacing: 12) {
                     ForEach(messages, id: \.id) { message in
                         MessageBubble(message: message)
                     }
                 }
                 .padding()
-			}
+            }
+            
+            HStack(spacing: 12) {
+                HStack {
+                    TextField("Chat", text: $newMessage, onCommit: { sendMessage() })
+                        .frame(height: 40)
+                        .submitLabel(.send)
+                    
+                    if newMessage != "" {
+                        Button(action: sendMessage) {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 28, height: 28)
+                                .foregroundStyle(.white, .blue)
+                        }
+                    }
+                }
+                .padding(.leading)
+                .padding(.trailing, 6)
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(.quaternary, lineWidth: 1))
+            }
+            .padding()
+        }
+        .navigationTitle("Chat")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { try? await conversation.connect(ephemeralKey: "YOUR_OPENAI_KEY_HERE") }
+    }
+    
+    func sendMessage() {
+        guard newMessage != "" else { return }
+        
+        Task {
+            try conversation.send(from: .user, text: newMessage)
+            newMessage = ""
+        }
+    }
+}
 
-			HStack(spacing: 12) {
-				HStack {
-					TextField("Chat", text: $newMessage, onCommit: { sendMessage() })
-						.frame(height: 40)
-						.submitLabel(.send)
-
-					if newMessage != "" {
-						Button(action: sendMessage) {
-							Image(systemName: "arrow.up.circle.fill")
-								.resizable()
-								.aspectRatio(contentMode: .fill)
-								.frame(width: 28, height: 28)
-								.foregroundStyle(.white, .blue)
-						}
-					}
-				}
-				.padding(.leading)
-				.padding(.trailing, 6)
-				.overlay(RoundedRectangle(cornerRadius: 20).stroke(.quaternary, lineWidth: 1))
-			}
-			.padding()
-		}
-		.navigationTitle("Chat")
-		.navigationBarTitleDisplayMode(.inline)
-		.task { try! await conversation.connect(ephemeralKey: YOUR_EPHEMERAL_KEY_HERE) }
-	}
-
-	func sendMessage() {
-		guard newMessage != "" else { return }
-
-		Task {
-			try await conversation.send(from: .user, text: newMessage)
-			newMessage = ""
-		}
-	}
+struct MessageBubble: View {
+    let message: Item.Message
+    
+    var text: String {
+        message.content.map { $0.text ?? "" }.joined()
+    }
+    
+    var body: some View {
+        HStack {
+            if message.role == .user {
+                Spacer()
+            }
+            
+            ZStack(alignment: .topTrailing) {
+                Text(text)
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(message.role == .user ? .blue : .secondary)
+                    .cornerRadius(20)
+            }
+            
+            if message.role == .assistant {
+                Spacer()
+            }
+        }
+        .padding(message.role == .user ? .leading : .trailing, 48)
+    }
 }
 ```
+
 
 Or, if you just want a simple app that lets the user talk and the AI respond:
 
@@ -109,7 +147,7 @@ struct ContentView: View {
 
 	var body: some View {
 		Text("Say something!")
-			.task { try! await conversation.connect(ephemeralKey: YOUR_EPHEMERAL_KEY_HERE) }
+			.task { try! await conversation.connect(ephemeralKey: "YOUR_OPENAI_KEY_HERE") }
 	}
 }
 ```
