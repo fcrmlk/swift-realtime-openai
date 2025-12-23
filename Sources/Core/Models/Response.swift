@@ -63,10 +63,35 @@ public struct Response: Identifiable, Equatable, Hashable, Codable, Sendable {
 		case inProgress = "in_progress"
 	}
     
-    public struct Usage: Equatable, Hashable, Codable, Sendable {
+    public struct TranscriptionUsage: Equatable, Hashable, Codable, Sendable {
         public let type: String
         public let seconds: Int
     }
+    
+	public struct Usage: Equatable, Hashable, Codable, Sendable {
+		public let totalTokens: Int
+		public let inputTokens: Int
+		public let outputTokens: Int
+		public let inputTokenDetails: InputTokenDetails
+		public let outputTokenDetails: OutputTokenDetails
+
+		public struct InputTokenDetails: Equatable, Hashable, Codable, Sendable {
+			public let textTokens: Int
+			public let audioTokens: Int
+			public let cachedTokens: Int
+			public let cachedTokensDetails: CachedTokensDetails
+
+			public struct CachedTokensDetails: Equatable, Hashable, Codable, Sendable {
+				public let textTokens: Int
+				public let audioTokens: Int
+			}
+		}
+
+		public struct OutputTokenDetails: Equatable, Hashable, Codable, Sendable {
+			public let textTokens: Int
+			public let audioTokens: Int
+		}
+	}
 
 	/// The unique ID of the response.
 	public let id: String
@@ -81,7 +106,8 @@ public struct Response: Identifiable, Equatable, Hashable, Codable, Sendable {
 	public var conversationId: String?
 
 	/// Usage statistics for the response.
-	public let usage: Usage?
+    public let usage: Usage?
+	public let transcriptionUsage: TranscriptionUsage?
 
 	/// Developer-provided string key-value pairs associated with this response.
 	public let metadata: [String: String]?
