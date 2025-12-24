@@ -83,6 +83,11 @@ public final class Conversation: @unchecked Sendable {
         }
     }
     
+    public func disconnect() {
+        client.disconnect()
+        errorStream.finish()
+    }
+    
     deinit {
         client.disconnect()
         errorStream.finish()
