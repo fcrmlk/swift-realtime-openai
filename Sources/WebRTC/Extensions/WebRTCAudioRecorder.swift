@@ -1,6 +1,6 @@
 @preconcurrency import AVFoundation
 
-final class WebRTCAudioRecorder: NSObject, @unchecked Sendable {
+public class WebRTCAudioRecorder: NSObject, @unchecked Sendable {
 
     private var audioFile: AVAudioFile?
     private let queue = DispatchQueue(label: "webrtc.audio.recorder")

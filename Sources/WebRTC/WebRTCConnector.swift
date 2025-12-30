@@ -6,7 +6,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-let webRTCAudioRecorder = WebRTCAudioRecorder()
+public let webRTCAudioRecorder = WebRTCAudioRecorder()
 
 @Observable public final class WebRTCConnector: NSObject, Connector, Sendable {
 	public enum WebRTCError: Error {
@@ -26,7 +26,7 @@ let webRTCAudioRecorder = WebRTCAudioRecorder()
 	public var isMuted: Bool {
 		!audioTrack.isEnabled
 	}
-
+    static let audioRecorder = WebRTCAudioRecorder()
 	package let audioTrack: LKRTCAudioTrack
 	private let dataChannel: LKRTCDataChannel
 	private let connection: LKRTCPeerConnection
