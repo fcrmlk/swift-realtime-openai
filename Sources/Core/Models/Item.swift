@@ -49,6 +49,18 @@ import MetaCodable
 					case let .inputAudio(audio): audio.transcript
 				}
 			}
+            public var audio: Data? {
+                switch self {
+                case let .audio(audio): audio.audio?.data ?? Data()
+                case let .inputAudio(audio): audio.audio?.data ?? Data()
+                case .text(_):
+                    Data()
+                case .inputText(_):
+                    Data()
+                case .inputImage(_):
+                    Data()
+                }
+            }
 		}
 
 		/// The unique ID of the item.
