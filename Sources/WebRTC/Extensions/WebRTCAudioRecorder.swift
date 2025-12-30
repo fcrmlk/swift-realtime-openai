@@ -53,7 +53,7 @@ public class WebRTCAudioRecorder: NSObject, @unchecked Sendable {
         }
     }
 
-    func stop() -> URL? {
+    public func stop() -> URL? {
         audioFile = nil
         print("✅ WebRTC recording stopped")
         return recordedURL   // ✅ return URL
