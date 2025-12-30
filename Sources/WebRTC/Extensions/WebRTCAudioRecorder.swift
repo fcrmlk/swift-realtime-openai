@@ -5,6 +5,9 @@ final class WebRTCAudioRecorder {
     private var audioFile: AVAudioFile?
     private let queue = DispatchQueue(label: "webrtc.audio.recorder")
 
+    // ✅ expose last recorded URL
+    private(set) var recordedURL: URL?
+
     func start(sampleRate: Double, channels: Int) {
         let format = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
@@ -25,6 +28,8 @@ final class WebRTCAudioRecorder {
             settings: format.settings
         )
 
+        recordedURL = url   // ✅ save URL
+
         print("🎙️ WebRTC recording started:", url)
     }
 
@@ -38,14 +43,19 @@ final class WebRTCAudioRecorder {
             )!
 
             buffer.frameLength = buffer.frameCapacity
-            memcpy(buffer.int16ChannelData![0], data, frames * 2 * Int(format.channelCount))
+            memcpy(
+                buffer.int16ChannelData![0],
+                data,
+                frames * 2 * Int(format.channelCount)
+            )
 
             try? file.write(from: buffer)
         }
     }
 
-    func stop() {
-        print("✅ WebRTC recording stopped")
+    func stop() -> URL? {
         audioFile = nil
+        print("✅ WebRTC recording stopped")
+        return recordedURL   // ✅ return URL
     }
 }
