@@ -43,7 +43,7 @@ public final class WebRTCAudioRecorder: NSObject, @unchecked Sendable {
     
     public func appendPCM16(
         _ data: Data,
-        sampleRate: Double = 16_000,
+        sampleRate: Double = 24_000,
         channels: AVAudioChannelCount = 1
     ) {
         let bytesPerFrame = Int(channels) * MemoryLayout<Int16>.size
@@ -89,7 +89,7 @@ public final class WebRTCAudioRecorder: NSObject, @unchecked Sendable {
 
     public func stop() -> URL? {
         audioFile = nil
-        print("✅ Recording stopped")
+        print("✅ Recording stopped", recordedURL)
         return recordedURL
     }
 }
