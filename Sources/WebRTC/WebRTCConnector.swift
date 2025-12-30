@@ -6,7 +6,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-@MainActor let webRTCAudioRecorder = WebRTCAudioRecorder()
+let webRTCAudioRecorder = WebRTCAudioRecorder()
 
 @Observable public final class WebRTCConnector: NSObject, Connector, Sendable {
 	public enum WebRTCError: Error {
@@ -94,12 +94,12 @@ import FoundationNetworking
 
 extension WebRTCConnector {
 	public static func create(connectingTo request: URLRequest) async throws -> WebRTCConnector {
-        let connector = try await create()
+		let connector = try create()
 		try await connector.connect(using: request)
 		return connector
 	}
 
-    @MainActor package static func create() throws -> WebRTCConnector {
+	package static func create() throws -> WebRTCConnector {
 		guard let connection = factory.peerConnection(
 			with: LKRTCConfiguration(),
 			constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil),
@@ -118,7 +118,7 @@ extension WebRTCConnector {
 
 private extension WebRTCConnector {
 
-    @MainActor static func setupLocalAudio(for connection: LKRTCPeerConnection) -> LKRTCAudioTrack {
+    static func setupLocalAudio(for connection: LKRTCPeerConnection) -> LKRTCAudioTrack {
 
         let audioSource = factory.audioSource(
             with: LKRTCMediaConstraints(
