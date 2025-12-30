@@ -49,18 +49,6 @@ import MetaCodable
 					case let .inputAudio(audio): audio.transcript
 				}
 			}
-            public var audio: Data? {
-                switch self {
-                case let .audio(audio): audio.audio?.data ?? Data()
-                case let .inputAudio(audio): audio.audio?.data ?? Data()
-                case .text(_):
-                    Data()
-                case .inputText(_):
-                    Data()
-                case .inputImage(_):
-                    Data()
-                }
-            }
 		}
 
 		/// The unique ID of the item.
@@ -490,12 +478,4 @@ extension Item.Message.Content: Codable {
 				try container.encode(audio.transcript, forKey: .transcript)
 		}
 	}
-}
-
-public extension Item.Message {
-
-    /// Returns all audio chunks (input + output) in this message
-    var allAudioData: [Data] {
-        content.compactMap { $0.audio }
-    }
 }
