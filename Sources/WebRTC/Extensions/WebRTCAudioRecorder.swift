@@ -1,20 +1,13 @@
 @preconcurrency import AVFoundation
 
-public class WebRTCAudioRecorder: NSObject, @unchecked Sendable {
+public final class WebRTCAudioRecorder: NSObject, @unchecked Sendable {
 
     private var audioFile: AVAudioFile?
     private let queue = DispatchQueue(label: "webrtc.audio.recorder")
-
-    // ✅ expose last recorded URL
     private(set) var recordedURL: URL?
 
-    func start(sampleRate: Double, channels: Int) {
-        let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: sampleRate,
-            channels: AVAudioChannelCount(channels),
-            interleaved: true
-        )!
+    // 🔑 start WITHOUT assuming format
+    public func start(with format: AVAudioFormat) {
 
         let url = FileManager.default.urls(
             for: .documentDirectory,
@@ -25,37 +18,78 @@ public class WebRTCAudioRecorder: NSObject, @unchecked Sendable {
 
         audioFile = try? AVAudioFile(
             forWriting: url,
-            settings: format.settings
+            settings: format.settings,
+            commonFormat: format.commonFormat,
+            interleaved: format.isInterleaved
         )
 
-        recordedURL = url   // ✅ save URL
-
-        print("🎙️ WebRTC recording started:", url)
+        recordedURL = url
+        print("🎙️ Recording started:", url)
     }
 
-    func append(_ data: UnsafeRawPointer, frames: Int, format: AVAudioFormat) {
+    // 🔑 write buffer AS-IS
+    public func append(_ buffer: AVAudioPCMBuffer) {
         queue.async {
             guard let file = self.audioFile else { return }
-
-            let buffer = AVAudioPCMBuffer(
-                pcmFormat: format,
-                frameCapacity: AVAudioFrameCount(frames)
-            )!
-
-            buffer.frameLength = buffer.frameCapacity
-            memcpy(
-                buffer.int16ChannelData![0],
-                data,
-                frames * 2 * Int(format.channelCount)
-            )
-
-            try? file.write(from: buffer)
+            do {
+                try file.write(from: buffer)
+            } catch {
+                print("❌ Audio write failed:", error)
+            }
         }
     }
+    
+    // MARK: - Public append helpers (Data → Recording)
+    
+    public func appendPCM16(
+        _ data: Data,
+        sampleRate: Double = 16_000,
+        channels: AVAudioChannelCount = 1
+    ) {
+        let bytesPerFrame = Int(channels) * MemoryLayout<Int16>.size
+        guard data.count >= bytesPerFrame else { return }
+
+        let frameCount = data.count / bytesPerFrame
+
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: sampleRate,
+            channels: channels,
+            interleaved: true
+        )!
+
+        // 🔑 Start recorder on FIRST chunk
+        if audioFile == nil {
+            start(with: format)
+        }
+
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(frameCount)
+        ) else {
+            return
+        }
+
+        buffer.frameLength = buffer.frameCapacity
+
+        // ✅ SAFE copy (AVFoundation approved)
+        data.withUnsafeBytes {
+            guard let src = $0.baseAddress else { return }
+            memcpy(
+                buffer.int16ChannelData![0],
+                src,
+                data.count
+            )
+        }
+
+        append(buffer)
+    }
+
+
 
     public func stop() -> URL? {
         audioFile = nil
-        print("✅ WebRTC recording stopped")
-        return recordedURL   // ✅ return URL
+        print("✅ Recording stopped")
+        return recordedURL
     }
 }
