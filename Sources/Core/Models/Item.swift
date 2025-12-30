@@ -491,3 +491,11 @@ extension Item.Message.Content: Codable {
 		}
 	}
 }
+
+public extension Item.Message {
+
+    /// Returns all audio chunks (input + output) in this message
+    var allAudioData: [Data] {
+        content.compactMap { $0.audio }
+    }
+}
