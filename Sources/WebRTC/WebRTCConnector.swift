@@ -187,16 +187,31 @@ private extension WebRTCConnector {
     }
 
     static func configureAudioSession() {
-        #if !os(macOS)
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, options: [.defaultToSpeaker])
-            try session.setMode(.videoChat)
-            try session.setActive(true)
-        } catch {
-            print("AVAudioSession error:", error)
+    #if !os(macOS)
+        let session = AVAudioSession.sharedInstance()
+
+        // ✅ Avoid reconfiguring again & again
+        if session.category == .playAndRecord {
+            return
         }
-        #endif
+
+        do {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,              // 🔑 IMPORTANT CHANGE
+                options: [
+                    .defaultToSpeaker,
+                    .allowBluetooth
+                ]
+            )
+
+            try session.setActive(true)
+
+        } catch {
+            // ⚠️ Safe to log only (mostly harmless)
+            print("AVAudioSession config warning:", error)
+        }
+    #endif
     }
 
     func performHandshake(using request: URLRequest) async throws {
