@@ -6,6 +6,8 @@ import Foundation
 import FoundationNetworking
 #endif
 
+@MainActor let webRTCAudioRecorder = WebRTCAudioRecorder()
+
 @Observable public final class WebRTCConnector: NSObject, Connector, Sendable {
 	public enum WebRTCError: Error {
 		case invalidEphemeralKey
@@ -92,12 +94,12 @@ import FoundationNetworking
 
 extension WebRTCConnector {
 	public static func create(connectingTo request: URLRequest) async throws -> WebRTCConnector {
-		let connector = try create()
+        let connector = try await create()
 		try await connector.connect(using: request)
 		return connector
 	}
 
-	package static func create() throws -> WebRTCConnector {
+    @MainActor package static func create() throws -> WebRTCConnector {
 		guard let connection = factory.peerConnection(
 			with: LKRTCConfiguration(),
 			constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil),
@@ -115,19 +117,36 @@ extension WebRTCConnector {
 }
 
 private extension WebRTCConnector {
-	static func setupLocalAudio(for connection: LKRTCPeerConnection) -> LKRTCAudioTrack {
-		let audioSource = factory.audioSource(with: LKRTCMediaConstraints(
-			mandatoryConstraints: [
-				"googNoiseSuppression": "true", "googHighpassFilter": "true",
-				"googEchoCancellation": "true", "googAutoGainControl": "true",
-			],
-			optionalConstraints: nil
-		))
 
-		return tap(factory.audioTrack(with: audioSource, trackId: "local_audio")) { audioTrack in
-			connection.add(audioTrack, streamIds: ["local_stream"])
-		}
-	}
+    @MainActor static func setupLocalAudio(for connection: LKRTCPeerConnection) -> LKRTCAudioTrack {
+
+        let audioSource = factory.audioSource(
+            with: LKRTCMediaConstraints(
+                mandatoryConstraints: [
+                    "googNoiseSuppression": "true",
+                    "googHighpassFilter": "true",
+                    "googEchoCancellation": "true",
+                    "googAutoGainControl": "true"
+                ],
+                optionalConstraints: nil
+            )
+        )
+
+        let track = factory.audioTrack(
+            with: audioSource,
+            trackId: "local_audio"
+        )
+
+        connection.add(track, streamIds: ["local_stream"])
+
+        // 🔥 START RECORDING HERE (ONCE)
+        webRTCAudioRecorder.start(
+            sampleRate: 48000,
+            channels: 1
+        )
+
+        return track
+    }
 
 	static func configureAudioSession() {
 		#if !os(macOS)
