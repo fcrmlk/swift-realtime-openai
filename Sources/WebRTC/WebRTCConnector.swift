@@ -6,308 +6,207 @@ import Foundation
 import FoundationNetworking
 #endif
 
-// MARK: - Global Recorder (library-level)
-public let webRTCAudioRecorder = WebRTCAudioRecorder()
+@Observable public final class WebRTCConnector: NSObject, Connector, Sendable {
+	public enum WebRTCError: Error {
+		case invalidEphemeralKey
+		case missingAudioPermission
+		case failedToCreateDataChannel
+		case failedToCreatePeerConnection
+		case badServerResponse(URLResponse)
+		case failedToCreateSDPOffer(Swift.Error)
+		case failedToSetLocalDescription(Swift.Error)
+		case failedToSetRemoteDescription(Swift.Error)
+	}
 
-// MARK: - WebRTCConnector
+	public let events: AsyncThrowingStream<ServerEvent, Error>
+	@MainActor public private(set) var status = RealtimeAPI.Status.disconnected
 
-@Observable
-public final class WebRTCConnector: NSObject, Connector, Sendable {
+	public var isMuted: Bool {
+		!audioTrack.isEnabled
+	}
 
-    // MARK: Errors
-    public enum WebRTCError: Error {
-        case invalidEphemeralKey
-        case missingAudioPermission
-        case failedToCreateDataChannel
-        case failedToCreatePeerConnection
-        case badServerResponse(URLResponse)
-        case failedToCreateSDPOffer(Swift.Error)
-        case failedToSetLocalDescription(Swift.Error)
-        case failedToSetRemoteDescription(Swift.Error)
-    }
+	package let audioTrack: LKRTCAudioTrack
+	private let dataChannel: LKRTCDataChannel
+	private let connection: LKRTCPeerConnection
 
-    // MARK: Public state
-    public let events: AsyncThrowingStream<ServerEvent, Error>
-    @MainActor public private(set) var status = RealtimeAPI.Status.disconnected
+	private let stream: AsyncThrowingStream<ServerEvent, Error>.Continuation
 
-    public var isMuted: Bool { !audioTrack.isEnabled }
+	private static let factory: LKRTCPeerConnectionFactory = {
+		LKRTCInitializeSSL()
 
-    // MARK: Internal
-    package let audioTrack: LKRTCAudioTrack
-    private let dataChannel: LKRTCDataChannel
-    private let connection: LKRTCPeerConnection
-    private let stream: AsyncThrowingStream<ServerEvent, Error>.Continuation
+		return LKRTCPeerConnectionFactory()
+	}()
 
-    // MARK: Factory
-    private static let factory: LKRTCPeerConnectionFactory = {
-        LKRTCInitializeSSL()
-        return LKRTCPeerConnectionFactory()
-    }()
+	private let encoder: JSONEncoder = {
+		let encoder = JSONEncoder()
+		encoder.keyEncodingStrategy = .convertToSnakeCase
+		return encoder
+	}()
 
-    // MARK: Coders
-    private let encoder: JSONEncoder = {
-        let e = JSONEncoder()
-        e.keyEncodingStrategy = .convertToSnakeCase
-        return e
-    }()
+	private let decoder: JSONDecoder = {
+		let decoder = JSONDecoder()
+		decoder.keyDecodingStrategy = .convertFromSnakeCase
+		return decoder
+	}()
 
-    private let decoder: JSONDecoder = {
-        let d = JSONDecoder()
-        d.keyDecodingStrategy = .convertFromSnakeCase
-        return d
-    }()
+	private init(connection: LKRTCPeerConnection, audioTrack: LKRTCAudioTrack, dataChannel: LKRTCDataChannel) {
+		self.connection = connection
+		self.audioTrack = audioTrack
+		self.dataChannel = dataChannel
+		(events, stream) = AsyncThrowingStream.makeStream(of: ServerEvent.self)
 
-    // MARK: Init
-    private init(
-        connection: LKRTCPeerConnection,
-        audioTrack: LKRTCAudioTrack,
-        dataChannel: LKRTCDataChannel
-    ) {
-        self.connection = connection
-        self.audioTrack = audioTrack
-        self.dataChannel = dataChannel
-        (events, stream) = AsyncThrowingStream.makeStream(of: ServerEvent.self)
-        super.init()
-        connection.delegate = self
-        dataChannel.delegate = self
-    }
+		super.init()
 
-    deinit { disconnect() }
+		connection.delegate = self
+		dataChannel.delegate = self
+	}
 
-    // MARK: Connect / Disconnect
+	deinit {
+		disconnect()
+	}
 
-    package func connect(using request: URLRequest) async throws {
-        guard connection.connectionState == .new else { return }
-        guard AVAudioApplication.shared.recordPermission == .granted else {
-            throw WebRTCError.missingAudioPermission
-        }
-        try await performHandshake(using: request)
-        Self.configureAudioSession()
-    }
+	package func connect(using request: URLRequest) async throws {
+		guard connection.connectionState == .new else { return }
 
-    public func disconnect() {
-        connection.close()
+		guard AVAudioApplication.shared.recordPermission == .granted else {
+			throw WebRTCError.missingAudioPermission
+		}
 
-        if let url = webRTCAudioRecorder.stop() {
-            print("🎧 Recording saved at:", url)
-        }
+		try await performHandshake(using: request)
+		Self.configureAudioSession()
+	}
 
-        stream.finish()
-    }
+	public func send(event: ClientEvent) throws {
+		try dataChannel.sendData(LKRTCDataBuffer(data: encoder.encode(event), isBinary: false))
+	}
 
-    // MARK: Send events
+	public func disconnect() {
+		connection.close()
+		stream.finish()
+	}
 
-    public func send(event: ClientEvent) throws {
-        try dataChannel.sendData(
-            LKRTCDataBuffer(
-                data: encoder.encode(event),
-                isBinary: false
-            )
-        )
-    }
-
-    // MARK: Input audio (USER → SERVER)
-    /// Call this when you send mic audio to Realtime API
-    public func sendInputAudio(_ data: Data) throws {
-        // 🔴 RECORD USER AUDIO
-        webRTCAudioRecorder.appendPCM16(data)
-
-        try send(event: .appendInputAudioBuffer(encoding: data))
-    }
-
-    public func toggleMute() {
-        audioTrack.isEnabled.toggle()
-    }
+	public func toggleMute() {
+		audioTrack.isEnabled.toggle()
+	}
 }
-
-// MARK: - Creation
 
 extension WebRTCConnector {
+	public static func create(connectingTo request: URLRequest) async throws -> WebRTCConnector {
+		let connector = try create()
+		try await connector.connect(using: request)
+		return connector
+	}
 
-    public static func create(connectingTo request: URLRequest) async throws -> WebRTCConnector {
-        let connector = try create()
-        try await connector.connect(using: request)
-        return connector
-    }
+	package static func create() throws -> WebRTCConnector {
+		guard let connection = factory.peerConnection(
+			with: LKRTCConfiguration(),
+			constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil),
+			delegate: nil
+		) else { throw WebRTCError.failedToCreatePeerConnection }
 
-    package static func create() throws -> WebRTCConnector {
-        guard let connection = factory.peerConnection(
-            with: LKRTCConfiguration(),
-            constraints: LKRTCMediaConstraints(
-                mandatoryConstraints: nil,
-                optionalConstraints: nil
-            ),
-            delegate: nil
-        ) else {
-            throw WebRTCError.failedToCreatePeerConnection
-        }
+		let audioTrack = Self.setupLocalAudio(for: connection)
 
-        let audioTrack = setupLocalAudio(for: connection)
+		guard let dataChannel = connection.dataChannel(forLabel: "oai-events", configuration: LKRTCDataChannelConfiguration()) else {
+			throw WebRTCError.failedToCreateDataChannel
+		}
 
-        guard let dataChannel = connection.dataChannel(
-            forLabel: "oai-events",
-            configuration: LKRTCDataChannelConfiguration()
-        ) else {
-            throw WebRTCError.failedToCreateDataChannel
-        }
-
-        return self.init(
-            connection: connection,
-            audioTrack: audioTrack,
-            dataChannel: dataChannel
-        )
-    }
+		return self.init(connection: connection, audioTrack: audioTrack, dataChannel: dataChannel)
+	}
 }
-
-// MARK: - Audio setup (NO recording here)
 
 private extension WebRTCConnector {
+	static func setupLocalAudio(for connection: LKRTCPeerConnection) -> LKRTCAudioTrack {
+		let audioSource = factory.audioSource(with: LKRTCMediaConstraints(
+			mandatoryConstraints: [
+				"googNoiseSuppression": "true", "googHighpassFilter": "true",
+				"googEchoCancellation": "true", "googAutoGainControl": "true",
+			],
+			optionalConstraints: nil
+		))
 
-    static func setupLocalAudio(for connection: LKRTCPeerConnection) -> LKRTCAudioTrack {
+		return tap(factory.audioTrack(with: audioSource, trackId: "local_audio")) { audioTrack in
+			connection.add(audioTrack, streamIds: ["local_stream"])
+		}
+	}
 
-        let audioSource = factory.audioSource(
-            with: LKRTCMediaConstraints(
-                mandatoryConstraints: [
-                    "googNoiseSuppression": "true",
-                    "googHighpassFilter": "true",
-                    "googEchoCancellation": "true",
-                    "googAutoGainControl": "true"
-                ],
-                optionalConstraints: nil
-            )
-        )
+	static func configureAudioSession() {
+		#if !os(macOS)
+		do {
+			let audioSession = AVAudioSession.sharedInstance()
+			#if os(tvOS)
+			try audioSession.setCategory(.playAndRecord, options: [])
+			#else
+			try audioSession.setCategory(.playAndRecord, options: [.defaultToSpeaker])
+			#endif
+			try audioSession.setMode(.videoChat)
+			try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+		} catch {
+			print("Failed to configure AVAudioSession: \(error)")
+		}
+		#endif
+	}
 
-        let track = factory.audioTrack(
-            with: audioSource,
-            trackId: "local_audio"
-        )
+	func performHandshake(using request: URLRequest) async throws {
+		let sdp = try await Result { try await connection.offer(for: LKRTCMediaConstraints(mandatoryConstraints: ["levelControl": "true"], optionalConstraints: nil)) }
+			.mapError(WebRTCError.failedToCreateSDPOffer)
+			.get()
 
-        connection.add(track, streamIds: ["local_stream"])
-        return track
-    }
+		do { try await connection.setLocalDescription(sdp) }
+		catch { throw WebRTCError.failedToSetLocalDescription(error) }
 
-    static func configureAudioSession() {
-    #if !os(macOS)
-        let session = AVAudioSession.sharedInstance()
+		let remoteSdp = try await fetchRemoteSDP(using: request, localSdp: connection.localDescription!.sdp)
 
-        // ✅ Avoid reconfiguring again & again
-        if session.category == .playAndRecord {
-            return
-        }
+		do { try await connection.setRemoteDescription(LKRTCSessionDescription(type: .answer, sdp: remoteSdp)) }
+		catch { throw WebRTCError.failedToSetRemoteDescription(error) }
+	}
 
-        do {
-            try session.setCategory(
-                .playAndRecord,
-                mode: .voiceChat,              // 🔑 IMPORTANT CHANGE
-                options: [
-                    .defaultToSpeaker,
-                    .allowBluetooth
-                ]
-            )
+	private func fetchRemoteSDP(using request: URLRequest, localSdp: String) async throws -> String {
+		var request = request
+		request.httpBody = localSdp.data(using: .utf8)
+		request.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
 
-            try session.setActive(true)
+		let (data, response) = try await URLSession.shared.data(for: request)
 
-        } catch {
-            // ⚠️ Safe to log only (mostly harmless)
-            print("AVAudioSession config warning:", error)
-        }
-    #endif
-    }
+		guard let response = response as? HTTPURLResponse, response.statusCode == 201, let remoteSdp = String(data: data, encoding: .utf8) else {
+			if (response as? HTTPURLResponse)?.statusCode == 401 { throw WebRTCError.invalidEphemeralKey }
+			throw WebRTCError.badServerResponse(response)
+		}
 
-    func performHandshake(using request: URLRequest) async throws {
-        let offer = try await Result {
-            try await connection.offer(
-                for: LKRTCMediaConstraints(
-                    mandatoryConstraints: ["levelControl": "true"],
-                    optionalConstraints: nil
-                )
-            )
-        }
-        .mapError(WebRTCError.failedToCreateSDPOffer)
-        .get()
-
-        do { try await connection.setLocalDescription(offer) }
-        catch { throw WebRTCError.failedToSetLocalDescription(error) }
-
-        let remoteSDP = try await fetchRemoteSDP(
-            using: request,
-            localSdp: connection.localDescription!.sdp
-        )
-
-        do {
-            try await connection.setRemoteDescription(
-                LKRTCSessionDescription(type: .answer, sdp: remoteSDP)
-            )
-        } catch {
-            throw WebRTCError.failedToSetRemoteDescription(error)
-        }
-    }
-
-    func fetchRemoteSDP(using request: URLRequest, localSdp: String) async throws -> String {
-        var req = request
-        req.httpBody = localSdp.data(using: .utf8)
-        req.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
-
-        let (data, response) = try await URLSession.shared.data(for: req)
-
-        guard
-            let http = response as? HTTPURLResponse,
-            http.statusCode == 201,
-            let sdp = String(data: data, encoding: .utf8)
-        else {
-            if (response as? HTTPURLResponse)?.statusCode == 401 {
-                throw WebRTCError.invalidEphemeralKey
-            }
-            throw WebRTCError.badServerResponse(response)
-        }
-
-        return sdp
-    }
+		return remoteSdp
+	}
 }
 
-// MARK: - Delegates
-
 extension WebRTCConnector: LKRTCPeerConnectionDelegate {
-    public func peerConnectionShouldNegotiate(_: LKRTCPeerConnection) {}
-    public func peerConnection(_: LKRTCPeerConnection, didAdd _: LKRTCMediaStream) {}
-    public func peerConnection(_: LKRTCPeerConnection, didOpen _: LKRTCDataChannel) {}
-    public func peerConnection(_: LKRTCPeerConnection, didRemove _: LKRTCMediaStream) {}
-    public func peerConnection(_: LKRTCPeerConnection, didChange _: LKRTCSignalingState) {}
-    public func peerConnection(_: LKRTCPeerConnection, didGenerate _: LKRTCIceCandidate) {}
-    public func peerConnection(_: LKRTCPeerConnection, didRemove _: [LKRTCIceCandidate]) {}
-    public func peerConnection(_: LKRTCPeerConnection, didChange _: LKRTCIceGatheringState) {}
+	public func peerConnectionShouldNegotiate(_: LKRTCPeerConnection) {}
+	public func peerConnection(_: LKRTCPeerConnection, didAdd _: LKRTCMediaStream) {}
+	public func peerConnection(_: LKRTCPeerConnection, didOpen _: LKRTCDataChannel) {}
+	public func peerConnection(_: LKRTCPeerConnection, didRemove _: LKRTCMediaStream) {}
+	public func peerConnection(_: LKRTCPeerConnection, didChange _: LKRTCSignalingState) {}
+	public func peerConnection(_: LKRTCPeerConnection, didGenerate _: LKRTCIceCandidate) {}
+	public func peerConnection(_: LKRTCPeerConnection, didRemove _: [LKRTCIceCandidate]) {}
+	public func peerConnection(_: LKRTCPeerConnection, didChange _: LKRTCIceGatheringState) {}
 
-    public func peerConnection(
-        _: LKRTCPeerConnection,
-        didChange newState: LKRTCIceConnectionState
-    ) {
-        print("ICE state:", newState)
-    }
+	public func peerConnection(_: LKRTCPeerConnection, didChange newState: LKRTCIceConnectionState) {
+		print("ICE Connection State changed to: \(newState)")
+	}
 }
 
 extension WebRTCConnector: LKRTCDataChannelDelegate {
+	public func dataChannel(_: LKRTCDataChannel, didReceiveMessageWith buffer: LKRTCDataBuffer) {
+		do { try stream.yield(decoder.decode(ServerEvent.self, from: buffer.data)) }
+		catch {
+			print("Failed to decode server event: \(String(data: buffer.data, encoding: .utf8) ?? "<invalid utf8>")")
+			stream.finish(throwing: error)
+		}
+	}
 
-    public func dataChannel(
-        _: LKRTCDataChannel,
-        didReceiveMessageWith buffer: LKRTCDataBuffer
-    ) {
-        do {
-            try stream.yield(
-                decoder.decode(ServerEvent.self, from: buffer.data)
-            )
-        } catch {
-            print("Decode error:", error)
-            stream.finish(throwing: error)
-        }
-    }
-
-    public func dataChannelDidChangeState(_ dataChannel: LKRTCDataChannel) {
-        Task { @MainActor in
-            switch dataChannel.readyState {
-            case .open: status = .connected
-            case .closing, .closed: status = .disconnected
-            default: break
-            }
-        }
-    }
+	public func dataChannelDidChangeState(_ dataChannel: LKRTCDataChannel) {
+		Task { @MainActor [state = dataChannel.readyState] in
+			switch state {
+				case .open: status = .connected
+				case .closing, .closed: status = .disconnected
+				default: break
+			}
+		}
+	}
 }

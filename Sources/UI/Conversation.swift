@@ -151,7 +151,6 @@ public final class Conversation: @unchecked Sendable {
     /// > Note: The `Conversation` class can automatically handle listening to the user's mic and playing back model responses.
     /// > To get started, call the `startListening` function.
     public func send(audioDelta audio: Data, commit: Bool = false) throws {
-        webRTCAudioRecorder.appendPCM16(audio)
         try send(event: .appendInputAudioBuffer(encoding: audio))
         if commit { try send(event: .commitInputAudioBuffer()) }
     }
@@ -262,7 +261,6 @@ private extension Conversation {
                 message.content[contentIndex] = .audio(.init(audio: audio.audio, transcript: transcript))
             }
         case let .responseOutputAudioDelta(_, _, itemId, _, contentIndex, delta):
-            webRTCAudioRecorder.appendPCM16(delta.data)
             updateEvent(id: itemId) { message in
                 guard case let .audio(audio) = message.content[contentIndex] else { return }
                 message.content[contentIndex] = .audio(.init(audio: (audio.audio?.data ?? Data()) + delta.data, transcript: audio.transcript))
