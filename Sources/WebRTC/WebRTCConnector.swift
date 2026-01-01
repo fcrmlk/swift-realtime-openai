@@ -105,10 +105,10 @@ import FoundationNetworking
 		}
 		
 		// Check if connection is established - recording works better after connection
-		guard status == .connected else {
-			// Still try to record, but warn that it might not work
-			print("Warning: Starting recording before connection is established may fail")
-		}
+//		guard status == .connected else {
+//			// Still try to record, but warn that it might not work
+//			print("Warning: Starting recording before connection is established may fail")
+//		}
 		
 		do {
 			let recorder = AudioRecorder()
