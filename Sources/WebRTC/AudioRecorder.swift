@@ -99,83 +99,24 @@ public final class AudioRecorder: NSObject {
 	}
 	
 	private func setupUserAudioRecording() throws {
-		// Try to use AVAudioEngine but in a way that doesn't interfere with WebRTC
-		// The key is to NOT start the engine, but instead just prepare it and use the input node
-		// However, taps require the engine to be running, so this won't work either.
+		// IMPORTANT: AVAudioEngine cannot be used while WebRTC is active
+		// WebRTC has exclusive control of the audio session, and starting AVAudioEngine
+		// causes the audio format to become invalid (0 Hz), preventing recording.
 		//
-		// Alternative: Try to capture from the WebRTC audio source directly
-		// But LiveKitWebRTC doesn't expose audio buffers from the source
+		// Unfortunately, LiveKitWebRTC doesn't expose audio buffers directly from tracks,
+		// so we cannot record the audio that's being sent/received through WebRTC.
 		//
-		// For now, we'll create a minimal AVAudioEngine setup that tries to work with WebRTC
-		// but may still fail due to audio session conflicts
+		// The only way to record would be to:
+		// 1. Access WebRTC's internal audio processing (not exposed)
+		// 2. Use system-level audio capture (requires additional permissions)
+		// 3. Record the audio data from the WebRTC protocol layer (if exposed)
+		//
+		// For now, recording is not possible while WebRTC is active.
+		// The file will be created but will remain empty.
 		
-		let audioEngine = AVAudioEngine()
-		let inputNode = audioEngine.inputNode
-		
-		// Get the input format - wait for it to be valid
-		var inputFormat = inputNode.inputFormat(forBus: 0)
-		var attempts = 0
-		while (inputFormat.sampleRate <= 0 || inputFormat.channelCount <= 0) && attempts < 20 {
-			Thread.sleep(forTimeInterval: 0.1)
-			inputFormat = inputNode.inputFormat(forBus: 0)
-			attempts += 1
-		}
-		
-		guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
-			// Can't get valid format - WebRTC is controlling the audio session
-			print("Warning: Cannot get valid audio format while WebRTC is active. Recording disabled.")
-			return // Don't throw - just don't record
-		}
-		
-		// Update recording format to match
-		if let matchingFormat = AVAudioFormat(
-			commonFormat: .pcmFormatInt16,
-			sampleRate: inputFormat.sampleRate,
-			channels: 1,
-			interleaved: false
-		) {
-			audioFormat = matchingFormat
-			// Recreate file with correct sample rate
-			let fileSettings: [String: Any] = [
-				AVFormatIDKey: Int(kAudioFormatLinearPCM),
-				AVSampleRateKey: inputFormat.sampleRate,
-				AVNumberOfChannelsKey: 1,
-				AVLinearPCMBitDepthKey: 16,
-				AVLinearPCMIsBigEndianKey: false,
-				AVLinearPCMIsFloatKey: false,
-				AVLinearPCMIsNonInterleaved: false
-			]
-			do {
-				audioFile = try AVAudioFile(forWriting: audioURL, settings: fileSettings, commonFormat: .pcmFormatInt16, interleaved: false)
-			} catch {
-				print("Failed to recreate audio file with correct format: \(error)")
-				return
-			}
-		}
-		
-		guard let recordingFormat = audioFormat,
-			  let converter = AVAudioConverter(from: inputFormat, to: recordingFormat) else {
-			return
-		}
-		
-		// Install tap
-		let bufferSize: AVAudioFrameCount = 1024
-		inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
-			guard buffer.frameLength > 0 else { return }
-			self?.processAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat, isUser: true)
-		}
-		
-		// Try to start - if it fails, we'll just not record but won't crash
-		audioEngine.prepare()
-		do {
-			try audioEngine.start()
-			userAudioEngine = audioEngine
-		} catch {
-			// Failed to start - remove tap and continue without recording
-			inputNode.removeTap(onBus: 0)
-			print("Warning: Could not start audio engine for recording: \(error)")
-			print("Recording will be disabled to avoid interfering with WebRTC.")
-		}
+		print("Note: Audio recording is not supported while WebRTC is active.")
+		print("AVAudioEngine conflicts with WebRTC's audio session management.")
+		print("The recording file will be created but will remain empty.")
 	}
 	
 	private func setupAssistantAudioRecording() throws {
