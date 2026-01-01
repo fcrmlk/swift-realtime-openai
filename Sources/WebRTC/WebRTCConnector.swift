@@ -73,7 +73,6 @@ import FoundationNetworking
 		}
 
 		try await performHandshake(using: request)
-		Self.configureAudioSession()
 	}
 
 	public func send(event: ClientEvent) throws {
@@ -127,23 +126,6 @@ private extension WebRTCConnector {
 		return tap(factory.audioTrack(with: audioSource, trackId: "local_audio")) { audioTrack in
 			connection.add(audioTrack, streamIds: ["local_stream"])
 		}
-	}
-
-	static func configureAudioSession() {
-		#if !os(macOS)
-		do {
-			let audioSession = AVAudioSession.sharedInstance()
-			#if os(tvOS)
-			try audioSession.setCategory(.playAndRecord, options: [])
-			#else
-			try audioSession.setCategory(.playAndRecord, options: [.defaultToSpeaker])
-			#endif
-			try audioSession.setMode(.videoChat)
-			try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-		} catch {
-			print("Failed to configure AVAudioSession: \(error)")
-		}
-		#endif
 	}
 
 	func performHandshake(using request: URLRequest) async throws {
