@@ -101,7 +101,7 @@ public final class AudioRecorder: NSObject {
 	private func setupUserAudioRecording() throws {
 		// For local audio, we'll use AVAudioEngine's input node
 		// This captures the microphone input that's being sent to WebRTC
-		// Note: We don't configure the audio session here to avoid interfering with WebRTC's session
+		// Important: We'll prepare the engine but NOT connect it to output to avoid interfering with WebRTC playback
 		let audioEngine = AVAudioEngine()
 		
 		let inputNode = audioEngine.inputNode
@@ -111,7 +111,6 @@ public final class AudioRecorder: NSObject {
 		// If format is still invalid, we'll use a default
 		if inputFormat.sampleRate <= 0 || inputFormat.channelCount <= 0 {
 			// Use a standard format if the input format is invalid
-			// This might happen if audio session isn't ready yet
 			guard let defaultFormat = AVAudioFormat(
 				commonFormat: .pcmFormatFloat32,
 				sampleRate: 48000.0,
@@ -155,7 +154,7 @@ public final class AudioRecorder: NSObject {
 			throw RecordingError.failedToStartRecording
 		}
 		
-		// Install tap on input node
+		// Install tap on input node BEFORE starting
 		// Use a smaller buffer size to reduce latency and avoid interfering with WebRTC
 		let bufferSize: AVAudioFrameCount = 1024
 		inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
@@ -166,21 +165,21 @@ public final class AudioRecorder: NSObject {
 			self?.processAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat, isUser: true)
 		}
 		
-		// Start the engine
-		// Note: This should work with the existing audio session configured by WebRTC
+		// CRITICAL: We need to start the engine to enable the tap, but we must NOT connect it to output
+		// This way it only captures input without interfering with WebRTC's audio playback
+		// The engine will run in the background just to enable the tap
+		audioEngine.prepare()
+		
+		// Start the engine - this enables the tap
+		// Since we haven't connected input to output, it won't interfere with WebRTC playback
 		do {
 			try audioEngine.start()
 			userAudioEngine = audioEngine
 		} catch {
-			// If starting fails, it might be because audio session is already in use
-			// Try to prepare the engine first
-			audioEngine.prepare()
-			do {
-				try audioEngine.start()
-				userAudioEngine = audioEngine
-			} catch {
-				throw RecordingError.failedToStartRecording
-			}
+			// If starting fails, the audio session might be in use by WebRTC
+			// In that case, we can't record without interfering, so we'll skip recording
+			print("Warning: Could not start audio engine for recording - may interfere with WebRTC")
+			throw RecordingError.failedToStartRecording
 		}
 	}
 	
