@@ -180,6 +180,29 @@ public final class Conversation: @unchecked Sendable {
     public func send(result output: Item.FunctionCallOutput) throws {
         try send(event: .createConversationItem(.functionCallOutput(output)))
     }
+    
+    /// Start recording both user and assistant audio from WebRTC streams
+    /// - Throws: RecordingError if recording cannot be started
+    public func startRecording() throws {
+        try client.startRecording()
+    }
+    
+    /// Stop recording and get the file URLs
+    /// - Returns: RecordingResult containing URLs to user and assistant audio files
+    /// - Throws: RecordingError if no recording is in progress
+    public func stopRecording() throws -> AudioRecorder.RecordingResult {
+        try client.stopRecording()
+    }
+    
+    /// Cancel the current recording and delete temporary files
+    public func cancelRecording() {
+        client.cancelRecording()
+    }
+    
+    /// Check if recording is currently in progress
+    public var isRecording: Bool {
+        client.isRecording
+    }
 }
 
 /// Event handling private API
