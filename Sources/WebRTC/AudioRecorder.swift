@@ -90,17 +90,10 @@ public final class AudioRecorder: NSObject {
 		// Set up audio processing for user track (local)
 		try setupUserAudioRecording()
 		
-		// Set up audio processing for assistant track (remote) if available
-		// Note: Remote audio recording is complex and may not work reliably
-		// We'll attempt it but won't fail if it doesn't work
-		if assistantTrack != nil {
-			do {
-				try setupAssistantAudioRecording()
-			} catch {
-				// Remote audio recording failed, but we can continue with user audio only
-				print("Warning: Failed to set up assistant audio recording: \(error)")
-			}
-		}
+		// Note: Remote audio recording is currently disabled
+		// WebRTC remote audio doesn't flow through AVAudioEngine in a way we can easily capture
+		// For now, we only record user audio (microphone input)
+		// TODO: Implement proper remote audio capture from WebRTC tracks if needed
 	}
 	
 	private func setupUserAudioRecording() throws {
@@ -108,8 +101,31 @@ public final class AudioRecorder: NSObject {
 		// This captures the microphone input that's being sent to WebRTC
 		let audioEngine = AVAudioEngine()
 		
+		// Configure audio session for recording
+		let audioSession = AVAudioSession.sharedInstance()
+		do {
+			try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+			try audioSession.setActive(true)
+		} catch {
+			throw RecordingError.failedToStartRecording
+		}
+		
 		let inputNode = audioEngine.inputNode
-		let inputFormat = inputNode.inputFormat(forBus: 0)
+		var inputFormat = inputNode.inputFormat(forBus: 0)
+		
+		// Validate and fix input format if needed
+		if inputFormat.sampleRate <= 0 || inputFormat.channelCount <= 0 {
+			// Use a standard format if the input format is invalid
+			guard let defaultFormat = AVAudioFormat(
+				commonFormat: .pcmFormatFloat32,
+				sampleRate: 44100.0,
+				channels: 1,
+				interleaved: false
+			) else {
+				throw RecordingError.failedToStartRecording
+			}
+			inputFormat = defaultFormat
+		}
 		
 		// Create converter to recording format
 		guard let recordingFormat = audioFormat,
@@ -120,6 +136,10 @@ public final class AudioRecorder: NSObject {
 		// Install tap on input node
 		let bufferSize: AVAudioFrameCount = 4096
 		inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
+			// Only process if buffer has valid data
+			guard buffer.frameLength > 0, buffer.format.sampleRate > 0, buffer.format.channelCount > 0 else {
+				return
+			}
 			self?.processAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat, isUser: true)
 		}
 		
