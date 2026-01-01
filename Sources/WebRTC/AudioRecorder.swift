@@ -99,27 +99,33 @@ public final class AudioRecorder: NSObject {
 	}
 	
 	private func setupUserAudioRecording() throws {
-		// For local audio, we'll use AVAudioEngine's input node
-		// This captures the microphone input that's being sent to WebRTC
-		// CRITICAL: We must use the EXACT format from the hardware input node
-		// Using a different format will cause a crash
+		// NOTE: AVAudioEngine conflicts with WebRTC's audio session management
+		// Starting an AVAudioEngine while WebRTC is active causes audio session conflicts
+		// This makes reliable recording difficult without interfering with WebRTC playback
+		
+		// For now, we'll attempt to record but it may not work reliably
+		// A better solution would require accessing WebRTC's audio buffers directly
+		// which isn't easily available through the LiveKitWebRTC API
+		
 		let audioEngine = AVAudioEngine()
 		
 		let inputNode = audioEngine.inputNode
 		var inputFormat = inputNode.inputFormat(forBus: 0)
 		
-		// Wait a bit for the audio session to be ready (WebRTC should have configured it)
-		// Try a few times if the format is invalid
+		// Wait for the audio session to be ready (WebRTC should have configured it)
+		// Try multiple times with increasing delays
 		var attempts = 0
-		while (inputFormat.sampleRate <= 0 || inputFormat.channelCount <= 0) && attempts < 5 {
-			Thread.sleep(forTimeInterval: 0.1) // Wait 100ms
+		let maxAttempts = 10
+		while (inputFormat.sampleRate <= 0 || inputFormat.channelCount <= 0) && attempts < maxAttempts {
+			Thread.sleep(forTimeInterval: 0.2) // Wait 200ms between attempts
 			inputFormat = inputNode.inputFormat(forBus: 0)
 			attempts += 1
 		}
 		
 		// Validate that we have a valid input format - if not, we can't record
 		guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
-			// Audio session not ready - this might happen if WebRTC hasn't initialized audio yet
+			// Audio session not ready or conflicting with WebRTC
+			// This is expected when WebRTC is actively using the audio session
 			throw RecordingError.failedToStartRecording
 		}
 		
@@ -172,13 +178,16 @@ public final class AudioRecorder: NSObject {
 		audioEngine.prepare()
 		
 		// Start the engine - this enables the tap
-		// We don't connect input to output, so it shouldn't interfere with WebRTC playback
+		// NOTE: Starting AVAudioEngine while WebRTC is active often fails due to audio session conflicts
+		// This is a known limitation - AVAudioEngine and WebRTC both try to control the audio session
 		do {
 			try audioEngine.start()
 			userAudioEngine = audioEngine
 		} catch {
-			// If starting fails, we can't record
+			// If starting fails, clean up and throw error
+			// This is expected when WebRTC is actively using the audio session
 			inputNode.removeTap(onBus: 0)
+			print("Recording failed: AVAudioEngine cannot start while WebRTC is active. This is a known limitation.")
 			throw RecordingError.failedToStartRecording
 		}
 	}

@@ -97,9 +97,17 @@ import FoundationNetworking
 	/// Start recording both user and assistant audio
 	/// - Returns: URLs to the temporary audio files when recording stops
 	/// - Throws: RecordingError if recording cannot be started
+	/// - Note: Recording may not work reliably while WebRTC is active due to audio session conflicts
+	///   It's recommended to start recording after the connection is established
 	public func startRecording() throws {
 		guard audioRecorder == nil else {
 			throw AudioRecorder.RecordingError.recordingInProgress
+		}
+		
+		// Check if connection is established - recording works better after connection
+		guard status == .connected else {
+			// Still try to record, but warn that it might not work
+			print("Warning: Starting recording before connection is established may fail")
 		}
 		
 		do {
