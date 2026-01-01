@@ -26,4 +26,9 @@ public struct RealtimeAPI: Sendable {
 	public func send(event: ClientEvent) async throws {
 		try await connector.send(event: event)
 	}
+	
+	/// Get the connector as a specific type if it matches
+	package func getConnector<T: Connector>(as type: T.Type) -> T? {
+		connector as? T
+	}
 }

@@ -28,6 +28,8 @@ import FoundationNetworking
 	package let audioTrack: LKRTCAudioTrack
 	private let dataChannel: LKRTCDataChannel
 	private let connection: LKRTCPeerConnection
+	@ObservationIgnored nonisolated(unsafe) private var remoteAudioTrack: LKRTCAudioTrack?
+	@ObservationIgnored nonisolated(unsafe) private var audioRecorder: AudioRecorder?
 
 	private let stream: AsyncThrowingStream<ServerEvent, Error>.Continuation
 
@@ -80,12 +82,60 @@ import FoundationNetworking
 	}
 
 	public func disconnect() {
+		// Stop recording if in progress
+		audioRecorder?.cancelRecording()
+		audioRecorder = nil
+		
 		connection.close()
 		stream.finish()
 	}
 
 	public func toggleMute() {
 		audioTrack.isEnabled.toggle()
+	}
+	
+	/// Start recording both user and assistant audio
+	/// - Returns: URLs to the temporary audio files when recording stops
+	/// - Throws: RecordingError if recording cannot be started
+	public func startRecording() throws {
+		guard audioRecorder == nil else {
+			throw AudioRecorder.RecordingError.recordingInProgress
+		}
+		
+		do {
+			let recorder = AudioRecorder()
+			try recorder.startRecording(userTrack: audioTrack, assistantTrack: remoteAudioTrack)
+			audioRecorder = recorder
+		} catch {
+			if let recordingError = error as? AudioRecorder.RecordingError {
+				throw recordingError
+			}
+			throw AudioRecorder.RecordingError.failedToStartRecording
+		}
+	}
+	
+	/// Stop recording and get the file URLs
+	/// - Returns: RecordingResult containing URLs to user and assistant audio files
+	/// - Throws: RecordingError if no recording is in progress
+	public func stopRecording() throws -> AudioRecorder.RecordingResult {
+		guard let recorder = audioRecorder else {
+			throw AudioRecorder.RecordingError.noRecordingInProgress
+		}
+		
+		let result = try recorder.stopRecording()
+		audioRecorder = nil
+		return result
+	}
+	
+	/// Cancel the current recording and delete temporary files
+	public func cancelRecording() {
+		audioRecorder?.cancelRecording()
+		audioRecorder = nil
+	}
+	
+	/// Check if recording is currently in progress
+	public var isRecording: Bool {
+		audioRecorder != nil
 	}
 }
 
@@ -160,9 +210,41 @@ private extension WebRTCConnector {
 
 extension WebRTCConnector: LKRTCPeerConnectionDelegate {
 	public func peerConnectionShouldNegotiate(_: LKRTCPeerConnection) {}
-	public func peerConnection(_: LKRTCPeerConnection, didAdd _: LKRTCMediaStream) {}
+	
+	public func peerConnection(_: LKRTCPeerConnection, didAdd stream: LKRTCMediaStream) {
+		// Capture remote audio track from the stream
+		let audioTracks = stream.audioTracks
+		if !audioTracks.isEmpty {
+			remoteAudioTrack = audioTracks[0]
+			
+			// If recording is in progress, restart it with the remote track
+			if let recorder = audioRecorder {
+				// Stop current recording
+				try? recorder.stopRecording()
+				audioRecorder = nil
+				
+				// Restart with remote track
+				do {
+					let newRecorder = AudioRecorder()
+					try newRecorder.startRecording(userTrack: audioTrack, assistantTrack: remoteAudioTrack)
+					audioRecorder = newRecorder
+				} catch {
+					print("Failed to restart recording with remote track: \(error)")
+				}
+			}
+		}
+	}
+	
 	public func peerConnection(_: LKRTCPeerConnection, didOpen _: LKRTCDataChannel) {}
-	public func peerConnection(_: LKRTCPeerConnection, didRemove _: LKRTCMediaStream) {}
+	
+	public func peerConnection(_: LKRTCPeerConnection, didRemove stream: LKRTCMediaStream) {
+		// Clear remote track if it was removed
+		let audioTracks = stream.audioTracks
+		if audioTracks.contains(where: { $0.trackId == remoteAudioTrack?.trackId }) {
+			remoteAudioTrack = nil
+		}
+	}
+	
 	public func peerConnection(_: LKRTCPeerConnection, didChange _: LKRTCSignalingState) {}
 	public func peerConnection(_: LKRTCPeerConnection, didGenerate _: LKRTCIceCandidate) {}
 	public func peerConnection(_: LKRTCPeerConnection, didRemove _: [LKRTCIceCandidate]) {}
