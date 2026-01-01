@@ -183,8 +183,16 @@ public final class Conversation: @unchecked Sendable {
     
     /// Start recording both user and assistant audio from WebRTC streams
     /// - Throws: RecordingError if recording cannot be started
+    /// - Note: It's recommended to wait for the connection to be established first.
+    ///   Use `waitForConnection()` or `whenConnected()` before calling this.
     public func startRecording() throws {
         try client.startRecording()
+    }
+    
+    /// Start recording asynchronously, waiting for connection if needed
+    /// This is a convenience method that ensures the connection is ready before starting recording
+    public func startRecordingAfterConnection() async throws {
+        try await client.startRecordingAfterConnection()
     }
     
     /// Stop recording and get the file URL
