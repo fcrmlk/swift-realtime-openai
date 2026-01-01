@@ -106,10 +106,20 @@ public final class AudioRecorder: NSObject {
 		let audioEngine = AVAudioEngine()
 		
 		let inputNode = audioEngine.inputNode
-		let inputFormat = inputNode.inputFormat(forBus: 0)
+		var inputFormat = inputNode.inputFormat(forBus: 0)
+		
+		// Wait a bit for the audio session to be ready (WebRTC should have configured it)
+		// Try a few times if the format is invalid
+		var attempts = 0
+		while (inputFormat.sampleRate <= 0 || inputFormat.channelCount <= 0) && attempts < 5 {
+			Thread.sleep(forTimeInterval: 0.1) // Wait 100ms
+			inputFormat = inputNode.inputFormat(forBus: 0)
+			attempts += 1
+		}
 		
 		// Validate that we have a valid input format - if not, we can't record
 		guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
+			// Audio session not ready - this might happen if WebRTC hasn't initialized audio yet
 			throw RecordingError.failedToStartRecording
 		}
 		
