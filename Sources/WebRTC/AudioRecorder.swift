@@ -51,10 +51,12 @@ public final class AudioRecorder: NSObject {
 		self.userTrack = userTrack
 		self.assistantTrack = assistantTrack
 		
-		// Standard WebRTC audio format: 48kHz is typical for WebRTC, but we'll record at 16kHz for compatibility
+		// Use the same sample rate as the input to avoid speed issues
+		// We'll determine the actual sample rate from the input node
+		// For now, use 48kHz which is standard for WebRTC
 		guard let recordingFormat = AVAudioFormat(
 			commonFormat: .pcmFormatInt16,
-			sampleRate: 16000.0,
+			sampleRate: 48000.0,
 			channels: 1,
 			interleaved: false
 		) else {
@@ -72,7 +74,7 @@ public final class AudioRecorder: NSObject {
 			// If that fails, try with explicit settings
 			let fileSettings: [String: Any] = [
 				AVFormatIDKey: Int(kAudioFormatLinearPCM),
-				AVSampleRateKey: 16000.0,
+				AVSampleRateKey: 48000.0,
 				AVNumberOfChannelsKey: 1,
 				AVLinearPCMBitDepthKey: 16,
 				AVLinearPCMIsBigEndianKey: false,
@@ -112,13 +114,39 @@ public final class AudioRecorder: NSObject {
 			// This might happen if audio session isn't ready yet
 			guard let defaultFormat = AVAudioFormat(
 				commonFormat: .pcmFormatFloat32,
-				sampleRate: 44100.0,
+				sampleRate: 48000.0,
 				channels: 1,
 				interleaved: false
 			) else {
 				throw RecordingError.failedToStartRecording
 			}
 			inputFormat = defaultFormat
+		}
+		
+		// Use the input format's sample rate for recording to avoid speed issues
+		// Update the recording format to match input sample rate
+		if let matchingFormat = AVAudioFormat(
+			commonFormat: .pcmFormatInt16,
+			sampleRate: inputFormat.sampleRate,
+			channels: 1,
+			interleaved: false
+		) {
+			audioFormat = matchingFormat
+			// Update the audio file with the correct sample rate
+			do {
+				audioFile = try AVAudioFile(forWriting: audioURL, settings: [:], commonFormat: .pcmFormatInt16, interleaved: false)
+			} catch {
+				let fileSettings: [String: Any] = [
+					AVFormatIDKey: Int(kAudioFormatLinearPCM),
+					AVSampleRateKey: inputFormat.sampleRate,
+					AVNumberOfChannelsKey: 1,
+					AVLinearPCMBitDepthKey: 16,
+					AVLinearPCMIsBigEndianKey: false,
+					AVLinearPCMIsFloatKey: false,
+					AVLinearPCMIsNonInterleaved: false
+				]
+				audioFile = try AVAudioFile(forWriting: audioURL, settings: fileSettings, commonFormat: .pcmFormatInt16, interleaved: false)
+			}
 		}
 		
 		// Create converter to recording format
