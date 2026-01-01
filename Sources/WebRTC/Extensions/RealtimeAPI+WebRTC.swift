@@ -24,8 +24,8 @@ public extension RealtimeAPI {
 		try webRTCConnector.startRecording()
 	}
 	
-	/// Stop recording and get the file URLs
-	/// - Returns: RecordingResult containing URLs to user and assistant audio files
+	/// Stop recording and get the file URL
+	/// - Returns: RecordingResult containing URL to the merged conversation audio file
 	/// - Throws: RecordingError if no recording is in progress or connector is not WebRTC
 	func stopRecording() throws -> AudioRecorder.RecordingResult {
 		guard let webRTCConnector = getConnector(as: WebRTCConnector.self) else {

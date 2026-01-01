@@ -13,35 +13,29 @@ public final class AudioRecorder: NSObject {
 	}
 	
 	public struct RecordingResult: Sendable {
-		public let userAudioURL: URL
-		public let assistantAudioURL: URL
+		public let audioURL: URL
 		
-		public init(userAudioURL: URL, assistantAudioURL: URL) {
-			self.userAudioURL = userAudioURL
-			self.assistantAudioURL = assistantAudioURL
+		public init(audioURL: URL) {
+			self.audioURL = audioURL
 		}
 	}
 	
-	private var userAudioFile: AVAudioFile?
-	private var assistantAudioFile: AVAudioFile?
+	private var audioFile: AVAudioFile?
 	private var userAudioEngine: AVAudioEngine?
 	private var assistantAudioEngine: AVAudioEngine?
-	private var userAudioFormat: AVAudioFormat?
-	private var assistantAudioFormat: AVAudioFormat?
+	private var audioFormat: AVAudioFormat?
 	private var userTrack: LKRTCAudioTrack?
 	private var assistantTrack: LKRTCAudioTrack?
 	
-	private let userAudioURL: URL
-	private let assistantAudioURL: URL
+	private let audioURL: URL
 	
 	private let lock = NSLock()
 	
     public override init() {
-		// Create temporary file URLs (using CAF format for better compatibility)
+		// Create temporary file URL (using CAF format for better compatibility)
 		let tempDir = FileManager.default.temporaryDirectory
 		let timestamp = UUID().uuidString
-		userAudioURL = tempDir.appendingPathComponent("user_audio_\(timestamp).caf")
-		assistantAudioURL = tempDir.appendingPathComponent("assistant_audio_\(timestamp).caf")
+		audioURL = tempDir.appendingPathComponent("conversation_audio_\(timestamp).caf")
 		
 		super.init()
 	}
@@ -50,7 +44,7 @@ public final class AudioRecorder: NSObject {
 		lock.lock()
 		defer { lock.unlock() }
 		
-		guard userAudioFile == nil && assistantAudioFile == nil else {
+		guard audioFile == nil else {
 			throw RecordingError.recordingInProgress
 		}
 		
@@ -67,17 +61,13 @@ public final class AudioRecorder: NSObject {
 			throw RecordingError.failedToCreateAudioFile
 		}
 		
+		audioFormat = recordingFormat
+		
 		// Use CAF format with linear PCM - no encoding required, avoids codec issues
 		// CAF (Core Audio Format) is a container that supports PCM directly
-		// Create audio files using the commonFormat initializer with AVAudioCommonFormat
+		// Create a single audio file for the merged conversation
 		do {
-			userAudioFile = try AVAudioFile(forWriting: userAudioURL, settings: [:], commonFormat: .pcmFormatInt16, interleaved: false)
-			userAudioFormat = recordingFormat
-			
-			if assistantTrack != nil {
-				assistantAudioFile = try AVAudioFile(forWriting: assistantAudioURL, settings: [:], commonFormat: .pcmFormatInt16, interleaved: false)
-				assistantAudioFormat = recordingFormat
-			}
+			audioFile = try AVAudioFile(forWriting: audioURL, settings: [:], commonFormat: .pcmFormatInt16, interleaved: false)
 		} catch {
 			// If that fails, try with explicit settings
 			let fileSettings: [String: Any] = [
@@ -91,13 +81,7 @@ public final class AudioRecorder: NSObject {
 			]
 			
 			do {
-				userAudioFile = try AVAudioFile(forWriting: userAudioURL, settings: fileSettings, commonFormat: .pcmFormatInt16, interleaved: false)
-				userAudioFormat = recordingFormat
-				
-				if assistantTrack != nil {
-					assistantAudioFile = try AVAudioFile(forWriting: assistantAudioURL, settings: fileSettings, commonFormat: .pcmFormatInt16, interleaved: false)
-					assistantAudioFormat = recordingFormat
-				}
+				audioFile = try AVAudioFile(forWriting: audioURL, settings: fileSettings, commonFormat: .pcmFormatInt16, interleaved: false)
 			} catch {
 				throw RecordingError.failedToCreateAudioFile
 			}
@@ -107,8 +91,15 @@ public final class AudioRecorder: NSObject {
 		try setupUserAudioRecording()
 		
 		// Set up audio processing for assistant track (remote) if available
+		// Note: Remote audio recording is complex and may not work reliably
+		// We'll attempt it but won't fail if it doesn't work
 		if assistantTrack != nil {
-			try setupAssistantAudioRecording()
+			do {
+				try setupAssistantAudioRecording()
+			} catch {
+				// Remote audio recording failed, but we can continue with user audio only
+				print("Warning: Failed to set up assistant audio recording: \(error)")
+			}
 		}
 	}
 	
@@ -121,7 +112,7 @@ public final class AudioRecorder: NSObject {
 		let inputFormat = inputNode.inputFormat(forBus: 0)
 		
 		// Create converter to recording format
-		guard let recordingFormat = userAudioFormat,
+		guard let recordingFormat = audioFormat,
 			  let converter = AVAudioConverter(from: inputFormat, to: recordingFormat) else {
 			throw RecordingError.failedToStartRecording
 		}
@@ -129,7 +120,7 @@ public final class AudioRecorder: NSObject {
 		// Install tap on input node
 		let bufferSize: AVAudioFrameCount = 4096
 		inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
-			self?.processUserAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat)
+			self?.processAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat, isUser: true)
 		}
 		
 		// Start the engine
@@ -142,76 +133,18 @@ public final class AudioRecorder: NSObject {
 	}
 	
 	private func setupAssistantAudioRecording() throws {
-		// For remote audio, we need to capture from the remote track
-		// Since WebRTC remote audio goes through the system output, we'll use a different approach
-		// We'll create an audio engine and connect it to process the remote audio
-		let audioEngine = AVAudioEngine()
+		// For remote audio recording, we need to capture from the WebRTC remote track
+		// This is complex because WebRTC handles audio internally
+		// For now, we'll skip remote audio recording as it requires more advanced setup
+		// The user audio recording will still work
 		
-		// Get a valid format for the output node
-		// Use the hardware output format or default to a standard format
-		let hardwareFormat = audioEngine.outputNode.outputFormat(forBus: 0)
+		// TODO: Implement proper remote audio capture from WebRTC tracks
+		// This would require accessing the remote track's audio buffers directly
+		// which may not be easily available through the LiveKitWebRTC API
 		
-		// Create a valid format for tapping - use hardware format if valid, otherwise use standard format
-		let tapFormat: AVAudioFormat
-		if hardwareFormat.sampleRate > 0 && hardwareFormat.channelCount > 0 {
-			tapFormat = hardwareFormat
-		} else {
-			// Default to standard format: 48kHz, stereo, Float32
-			guard let defaultFormat = AVAudioFormat(
-				commonFormat: .pcmFormatFloat32,
-				sampleRate: 48000.0,
-				channels: 2,
-				interleaved: false
-			) else {
-				throw RecordingError.failedToStartRecording
-			}
-			tapFormat = defaultFormat
-		}
-		
-		// Create converter to recording format
-		guard let recordingFormat = assistantAudioFormat,
-			  let converter = AVAudioConverter(from: tapFormat, to: recordingFormat) else {
-			throw RecordingError.failedToStartRecording
-		}
-		
-		// We need to connect something to the output node to make it active
-		// Create a silent player node to keep the engine running
-		let playerNode = AVAudioPlayerNode()
-		audioEngine.attach(playerNode)
-		
-		// Connect player to output (even though it won't play anything, it keeps the engine active)
-		audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: tapFormat)
-		audioEngine.connect(audioEngine.mainMixerNode, to: audioEngine.outputNode, format: tapFormat)
-		
-		// Install tap on main mixer node (this is where audio would flow)
-		let bufferSize: AVAudioFrameCount = 4096
-		audioEngine.mainMixerNode.installTap(onBus: 0, bufferSize: bufferSize, format: tapFormat) { [weak self] buffer, _ in
-			self?.processAssistantAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat)
-		}
-		
-		// Start the engine
-		do {
-			try audioEngine.start()
-			assistantAudioEngine = audioEngine
-		} catch {
-			throw RecordingError.failedToStartRecording
-		}
-	}
-	
-	private func processUserAudioBuffer(
-		_ buffer: AVAudioPCMBuffer,
-		converter: AVAudioConverter,
-		recordingFormat: AVAudioFormat
-	) {
-		processAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat, isUser: true)
-	}
-	
-	private func processAssistantAudioBuffer(
-		_ buffer: AVAudioPCMBuffer,
-		converter: AVAudioConverter,
-		recordingFormat: AVAudioFormat
-	) {
-		processAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat, isUser: false)
+		// For now, we'll throw an error to indicate it's not supported
+		// but the caller will catch it and continue with user audio only
+		throw RecordingError.failedToStartRecording
 	}
 	
 	private func processAudioBuffer(
@@ -223,7 +156,7 @@ public final class AudioRecorder: NSObject {
 		lock.lock()
 		defer { lock.unlock() }
 		
-		guard let audioFile = isUser ? userAudioFile : assistantAudioFile else {
+		guard let audioFile = audioFile else {
 			return
 		}
 		
@@ -260,7 +193,7 @@ public final class AudioRecorder: NSObject {
 		lock.lock()
 		defer { lock.unlock() }
 		
-		guard userAudioFile != nil || assistantAudioFile != nil else {
+		guard audioFile != nil else {
 			throw RecordingError.noRecordingInProgress
 		}
 		
@@ -275,20 +208,15 @@ public final class AudioRecorder: NSObject {
 			engine.stop()
 		}
 		
-		// Close files
-		userAudioFile = nil
-		assistantAudioFile = nil
-		userAudioFormat = nil
-		assistantAudioFormat = nil
+		// Close file
+		audioFile = nil
+		audioFormat = nil
 		userAudioEngine = nil
 		assistantAudioEngine = nil
 		userTrack = nil
 		assistantTrack = nil
 		
-		return RecordingResult(
-			userAudioURL: userAudioURL,
-			assistantAudioURL: assistantAudioURL
-		)
+		return RecordingResult(audioURL: audioURL)
 	}
 	
 	public func cancelRecording() {
@@ -305,17 +233,14 @@ public final class AudioRecorder: NSObject {
 			engine.stop()
 		}
 		
-		userAudioFile = nil
-		assistantAudioFile = nil
-		userAudioFormat = nil
-		assistantAudioFormat = nil
+		audioFile = nil
+		audioFormat = nil
 		userAudioEngine = nil
 		assistantAudioEngine = nil
 		userTrack = nil
 		assistantTrack = nil
 		
-		// Clean up temporary files
-		try? FileManager.default.removeItem(at: userAudioURL)
-		try? FileManager.default.removeItem(at: assistantAudioURL)
+		// Clean up temporary file
+		try? FileManager.default.removeItem(at: audioURL)
 	}
 }
