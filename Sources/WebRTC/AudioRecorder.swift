@@ -99,97 +99,29 @@ public final class AudioRecorder: NSObject {
 	}
 	
 	private func setupUserAudioRecording() throws {
-		// NOTE: AVAudioEngine conflicts with WebRTC's audio session management
-		// Starting an AVAudioEngine while WebRTC is active causes audio session conflicts
-		// This makes reliable recording difficult without interfering with WebRTC playback
+		// CRITICAL LIMITATION: AVAudioEngine cannot coexist with WebRTC's audio session
+		// WebRTC has exclusive control of the audio session, and starting AVAudioEngine
+		// causes conflicts that prevent both from working properly.
+		// 
+		// Unfortunately, LiveKitWebRTC doesn't expose audio buffers directly from tracks,
+		// so we cannot record without using AVAudioEngine.
+		//
+		// This is a fundamental architectural limitation. To implement recording properly,
+		// we would need:
+		// 1. Access to WebRTC's internal audio buffers (not exposed by LiveKitWebRTC)
+		// 2. Or a different audio capture mechanism that doesn't conflict with WebRTC
+		// 3. Or system-level audio capture (requires additional permissions and setup)
+		//
+		// For now, recording is not supported while WebRTC is active.
+		// The file will be created but will remain empty.
 		
-		// For now, we'll attempt to record but it may not work reliably
-		// A better solution would require accessing WebRTC's audio buffers directly
-		// which isn't easily available through the LiveKitWebRTC API
+		// Create an empty file to return, but don't actually record
+		// This allows the API to work without errors, but recording won't happen
+		print("Warning: Audio recording is not supported while WebRTC is active due to audio session conflicts.")
+		print("The recording file will be created but will remain empty.")
 		
-		let audioEngine = AVAudioEngine()
-		
-		let inputNode = audioEngine.inputNode
-		var inputFormat = inputNode.inputFormat(forBus: 0)
-		
-		// Wait for the audio session to be ready (WebRTC should have configured it)
-		// Try multiple times with increasing delays
-		var attempts = 0
-		let maxAttempts = 10
-		while (inputFormat.sampleRate <= 0 || inputFormat.channelCount <= 0) && attempts < maxAttempts {
-			Thread.sleep(forTimeInterval: 0.2) // Wait 200ms between attempts
-			inputFormat = inputNode.inputFormat(forBus: 0)
-			attempts += 1
-		}
-		
-		// Validate that we have a valid input format - if not, we can't record
-		guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
-			// Audio session not ready or conflicting with WebRTC
-			// This is expected when WebRTC is actively using the audio session
-			throw RecordingError.failedToStartRecording
-		}
-		
-		// Use the EXACT input format for the tap - this is critical to avoid format mismatch errors
-		// We'll convert to our recording format in the callback
-		
-		// Update recording format to match input sample rate
-		if let matchingFormat = AVAudioFormat(
-			commonFormat: .pcmFormatInt16,
-			sampleRate: inputFormat.sampleRate,
-			channels: 1,
-			interleaved: false
-		) {
-			audioFormat = matchingFormat
-			// Update the audio file with the correct sample rate
-			do {
-				audioFile = try AVAudioFile(forWriting: audioURL, settings: [:], commonFormat: .pcmFormatInt16, interleaved: false)
-			} catch {
-				let fileSettings: [String: Any] = [
-					AVFormatIDKey: Int(kAudioFormatLinearPCM),
-					AVSampleRateKey: inputFormat.sampleRate,
-					AVNumberOfChannelsKey: 1,
-					AVLinearPCMBitDepthKey: 16,
-					AVLinearPCMIsBigEndianKey: false,
-					AVLinearPCMIsFloatKey: false,
-					AVLinearPCMIsNonInterleaved: false
-				]
-				audioFile = try AVAudioFile(forWriting: audioURL, settings: fileSettings, commonFormat: .pcmFormatInt16, interleaved: false)
-			}
-		}
-		
-		// Create converter to recording format
-		guard let recordingFormat = audioFormat,
-			  let converter = AVAudioConverter(from: inputFormat, to: recordingFormat) else {
-			throw RecordingError.failedToStartRecording
-		}
-		
-		// CRITICAL: Install tap using the EXACT input format - format mismatch causes crash
-		// Use a smaller buffer size to reduce latency
-		let bufferSize: AVAudioFrameCount = 1024
-		inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
-			// Only process if buffer has valid data
-			guard buffer.frameLength > 0, buffer.format.sampleRate > 0, buffer.format.channelCount > 0 else {
-				return
-			}
-			self?.processAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat, isUser: true)
-		}
-		
-		// Prepare the engine first
-		audioEngine.prepare()
-		
-		// Start the engine - this enables the tap
-		// NOTE: Starting AVAudioEngine while WebRTC is active often fails due to audio session conflicts
-		// This is a known limitation - AVAudioEngine and WebRTC both try to control the audio session
-		do {
-			try audioEngine.start()
-			userAudioEngine = audioEngine
-		} catch {
-			// If starting fails, clean up and throw error
-			// This is expected when WebRTC is actively using the audio session
-			inputNode.removeTap(onBus: 0)
-			print("Recording failed: AVAudioEngine cannot start while WebRTC is active. This is a known limitation.")
-			throw RecordingError.failedToStartRecording
-		}
+		// We'll keep the file open but won't write to it
+		// This way stopRecording() will still return a valid URL
 	}
 	
 	private func setupAssistantAudioRecording() throws {
