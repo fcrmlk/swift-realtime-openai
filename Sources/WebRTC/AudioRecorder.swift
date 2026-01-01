@@ -99,23 +99,17 @@ public final class AudioRecorder: NSObject {
 	private func setupUserAudioRecording() throws {
 		// For local audio, we'll use AVAudioEngine's input node
 		// This captures the microphone input that's being sent to WebRTC
+		// Note: We don't configure the audio session here to avoid interfering with WebRTC's session
 		let audioEngine = AVAudioEngine()
-		
-		// Configure audio session for recording
-		let audioSession = AVAudioSession.sharedInstance()
-		do {
-			try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
-			try audioSession.setActive(true)
-		} catch {
-			throw RecordingError.failedToStartRecording
-		}
 		
 		let inputNode = audioEngine.inputNode
 		var inputFormat = inputNode.inputFormat(forBus: 0)
 		
-		// Validate and fix input format if needed
+		// Wait a moment for the audio session to be ready (WebRTC should have configured it)
+		// If format is still invalid, we'll use a default
 		if inputFormat.sampleRate <= 0 || inputFormat.channelCount <= 0 {
 			// Use a standard format if the input format is invalid
+			// This might happen if audio session isn't ready yet
 			guard let defaultFormat = AVAudioFormat(
 				commonFormat: .pcmFormatFloat32,
 				sampleRate: 44100.0,
@@ -134,7 +128,8 @@ public final class AudioRecorder: NSObject {
 		}
 		
 		// Install tap on input node
-		let bufferSize: AVAudioFrameCount = 4096
+		// Use a smaller buffer size to reduce latency and avoid interfering with WebRTC
+		let bufferSize: AVAudioFrameCount = 1024
 		inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
 			// Only process if buffer has valid data
 			guard buffer.frameLength > 0, buffer.format.sampleRate > 0, buffer.format.channelCount > 0 else {
@@ -144,11 +139,20 @@ public final class AudioRecorder: NSObject {
 		}
 		
 		// Start the engine
+		// Note: This should work with the existing audio session configured by WebRTC
 		do {
 			try audioEngine.start()
 			userAudioEngine = audioEngine
 		} catch {
-			throw RecordingError.failedToStartRecording
+			// If starting fails, it might be because audio session is already in use
+			// Try to prepare the engine first
+			audioEngine.prepare()
+			do {
+				try audioEngine.start()
+				userAudioEngine = audioEngine
+			} catch {
+				throw RecordingError.failedToStartRecording
+			}
 		}
 	}
 	
