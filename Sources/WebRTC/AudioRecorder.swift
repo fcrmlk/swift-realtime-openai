@@ -37,11 +37,11 @@ public final class AudioRecorder: NSObject {
 	private let lock = NSLock()
 	
     public override init() {
-		// Create temporary file URLs
+		// Create temporary file URLs (using CAF format for better compatibility)
 		let tempDir = FileManager.default.temporaryDirectory
 		let timestamp = UUID().uuidString
-		userAudioURL = tempDir.appendingPathComponent("user_audio_\(timestamp).m4a")
-		assistantAudioURL = tempDir.appendingPathComponent("assistant_audio_\(timestamp).m4a")
+		userAudioURL = tempDir.appendingPathComponent("user_audio_\(timestamp).caf")
+		assistantAudioURL = tempDir.appendingPathComponent("assistant_audio_\(timestamp).caf")
 		
 		super.init()
 	}
@@ -67,25 +67,40 @@ public final class AudioRecorder: NSObject {
 			throw RecordingError.failedToCreateAudioFile
 		}
 		
-		// Audio file settings for M4A/AAC format
-		let fileSettings: [String: Any] = [
-			AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-			AVSampleRateKey: 16000.0,
-			AVNumberOfChannelsKey: 1,
-			AVEncoderBitRateKey: 64000
-		]
-		
-		// Create audio files
+		// Use CAF format with linear PCM - no encoding required, avoids codec issues
+		// CAF (Core Audio Format) is a container that supports PCM directly
+		// Create audio files using the commonFormat initializer with AVAudioCommonFormat
 		do {
-			userAudioFile = try AVAudioFile(forWriting: userAudioURL, settings: fileSettings)
+			userAudioFile = try AVAudioFile(forWriting: userAudioURL, settings: [:], commonFormat: .pcmFormatInt16, interleaved: false)
 			userAudioFormat = recordingFormat
 			
 			if assistantTrack != nil {
-				assistantAudioFile = try AVAudioFile(forWriting: assistantAudioURL, settings: fileSettings)
+				assistantAudioFile = try AVAudioFile(forWriting: assistantAudioURL, settings: [:], commonFormat: .pcmFormatInt16, interleaved: false)
 				assistantAudioFormat = recordingFormat
 			}
 		} catch {
-			throw RecordingError.failedToCreateAudioFile
+			// If that fails, try with explicit settings
+			let fileSettings: [String: Any] = [
+				AVFormatIDKey: Int(kAudioFormatLinearPCM),
+				AVSampleRateKey: 16000.0,
+				AVNumberOfChannelsKey: 1,
+				AVLinearPCMBitDepthKey: 16,
+				AVLinearPCMIsBigEndianKey: false,
+				AVLinearPCMIsFloatKey: false,
+				AVLinearPCMIsNonInterleaved: false
+			]
+			
+			do {
+				userAudioFile = try AVAudioFile(forWriting: userAudioURL, settings: fileSettings, commonFormat: .pcmFormatInt16, interleaved: false)
+				userAudioFormat = recordingFormat
+				
+				if assistantTrack != nil {
+					assistantAudioFile = try AVAudioFile(forWriting: assistantAudioURL, settings: fileSettings, commonFormat: .pcmFormatInt16, interleaved: false)
+					assistantAudioFormat = recordingFormat
+				}
+			} catch {
+				throw RecordingError.failedToCreateAudioFile
+			}
 		}
 		
 		// Set up audio processing for user track (local)
