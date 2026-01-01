@@ -101,29 +101,22 @@ public final class AudioRecorder: NSObject {
 	private func setupUserAudioRecording() throws {
 		// For local audio, we'll use AVAudioEngine's input node
 		// This captures the microphone input that's being sent to WebRTC
-		// Important: We'll prepare the engine but NOT connect it to output to avoid interfering with WebRTC playback
+		// CRITICAL: We must use the EXACT format from the hardware input node
+		// Using a different format will cause a crash
 		let audioEngine = AVAudioEngine()
 		
 		let inputNode = audioEngine.inputNode
-		var inputFormat = inputNode.inputFormat(forBus: 0)
+		let inputFormat = inputNode.inputFormat(forBus: 0)
 		
-		// Wait a moment for the audio session to be ready (WebRTC should have configured it)
-		// If format is still invalid, we'll use a default
-		if inputFormat.sampleRate <= 0 || inputFormat.channelCount <= 0 {
-			// Use a standard format if the input format is invalid
-			guard let defaultFormat = AVAudioFormat(
-				commonFormat: .pcmFormatFloat32,
-				sampleRate: 48000.0,
-				channels: 1,
-				interleaved: false
-			) else {
-				throw RecordingError.failedToStartRecording
-			}
-			inputFormat = defaultFormat
+		// Validate that we have a valid input format - if not, we can't record
+		guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
+			throw RecordingError.failedToStartRecording
 		}
 		
-		// Use the input format's sample rate for recording to avoid speed issues
-		// Update the recording format to match input sample rate
+		// Use the EXACT input format for the tap - this is critical to avoid format mismatch errors
+		// We'll convert to our recording format in the callback
+		
+		// Update recording format to match input sample rate
 		if let matchingFormat = AVAudioFormat(
 			commonFormat: .pcmFormatInt16,
 			sampleRate: inputFormat.sampleRate,
@@ -154,8 +147,8 @@ public final class AudioRecorder: NSObject {
 			throw RecordingError.failedToStartRecording
 		}
 		
-		// Install tap on input node BEFORE starting
-		// Use a smaller buffer size to reduce latency and avoid interfering with WebRTC
+		// CRITICAL: Install tap using the EXACT input format - format mismatch causes crash
+		// Use a smaller buffer size to reduce latency
 		let bufferSize: AVAudioFrameCount = 1024
 		inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
 			// Only process if buffer has valid data
@@ -165,20 +158,17 @@ public final class AudioRecorder: NSObject {
 			self?.processAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat, isUser: true)
 		}
 		
-		// CRITICAL: We need to start the engine to enable the tap, but we must NOT connect it to output
-		// This way it only captures input without interfering with WebRTC's audio playback
-		// The engine will run in the background just to enable the tap
+		// Prepare the engine first
 		audioEngine.prepare()
 		
 		// Start the engine - this enables the tap
-		// Since we haven't connected input to output, it won't interfere with WebRTC playback
+		// We don't connect input to output, so it shouldn't interfere with WebRTC playback
 		do {
 			try audioEngine.start()
 			userAudioEngine = audioEngine
 		} catch {
-			// If starting fails, the audio session might be in use by WebRTC
-			// In that case, we can't record without interfering, so we'll skip recording
-			print("Warning: Could not start audio engine for recording - may interfere with WebRTC")
+			// If starting fails, we can't record
+			inputNode.removeTap(onBus: 0)
 			throw RecordingError.failedToStartRecording
 		}
 	}
