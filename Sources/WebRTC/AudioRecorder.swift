@@ -142,35 +142,50 @@ public final class AudioRecorder: NSObject {
 	}
 	
 	private func setupAssistantAudioRecording() throws {
-		// For remote audio, we'll use AVAudioEngine to capture from the output
-		// WebRTC remote audio is played through the system, so we tap into the output
+		// For remote audio, we need to capture from the remote track
+		// Since WebRTC remote audio goes through the system output, we'll use a different approach
+		// We'll create an audio engine and connect it to process the remote audio
 		let audioEngine = AVAudioEngine()
 		
-		// Use the output node format (where remote audio would be played)
-		// WebRTC typically uses 48kHz, but we'll use the engine's format
-		let outputFormat = audioEngine.outputNode.outputFormat(forBus: 0)
+		// Get a valid format for the output node
+		// Use the hardware output format or default to a standard format
+		let hardwareFormat = audioEngine.outputNode.outputFormat(forBus: 0)
+		
+		// Create a valid format for tapping - use hardware format if valid, otherwise use standard format
+		let tapFormat: AVAudioFormat
+		if hardwareFormat.sampleRate > 0 && hardwareFormat.channelCount > 0 {
+			tapFormat = hardwareFormat
+		} else {
+			// Default to standard format: 48kHz, stereo, Float32
+			guard let defaultFormat = AVAudioFormat(
+				commonFormat: .pcmFormatFloat32,
+				sampleRate: 48000.0,
+				channels: 2,
+				interleaved: false
+			) else {
+				throw RecordingError.failedToStartRecording
+			}
+			tapFormat = defaultFormat
+		}
 		
 		// Create converter to recording format
-		guard let recordingFormat = assistantAudioFormat else {
+		guard let recordingFormat = assistantAudioFormat,
+			  let converter = AVAudioConverter(from: tapFormat, to: recordingFormat) else {
 			throw RecordingError.failedToStartRecording
 		}
 		
-		// Create a format for tapping (use output format or default to 48kHz stereo)
-		let tapFormat = outputFormat.sampleRate > 0 ? outputFormat : AVAudioFormat(
-			commonFormat: .pcmFormatFloat32,
-			sampleRate: 48000.0,
-			channels: 2,
-			interleaved: false
-		)!
+		// We need to connect something to the output node to make it active
+		// Create a silent player node to keep the engine running
+		let playerNode = AVAudioPlayerNode()
+		audioEngine.attach(playerNode)
 		
-		guard let converter = AVAudioConverter(from: tapFormat, to: recordingFormat) else {
-			throw RecordingError.failedToStartRecording
-		}
+		// Connect player to output (even though it won't play anything, it keeps the engine active)
+		audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: tapFormat)
+		audioEngine.connect(audioEngine.mainMixerNode, to: audioEngine.outputNode, format: tapFormat)
 		
-		// Install tap on output node to capture what's being played
-		// Note: This captures system audio output, which includes remote WebRTC audio
+		// Install tap on main mixer node (this is where audio would flow)
 		let bufferSize: AVAudioFrameCount = 4096
-		audioEngine.outputNode.installTap(onBus: 0, bufferSize: bufferSize, format: tapFormat) { [weak self] buffer, _ in
+		audioEngine.mainMixerNode.installTap(onBus: 0, bufferSize: bufferSize, format: tapFormat) { [weak self] buffer, _ in
 			self?.processAssistantAudioBuffer(buffer, converter: converter, recordingFormat: recordingFormat)
 		}
 		
@@ -256,7 +271,7 @@ public final class AudioRecorder: NSObject {
 		}
 		
 		if let engine = assistantAudioEngine {
-			engine.outputNode.removeTap(onBus: 0)
+			engine.mainMixerNode.removeTap(onBus: 0)
 			engine.stop()
 		}
 		
@@ -286,7 +301,7 @@ public final class AudioRecorder: NSObject {
 		}
 		
 		if let engine = assistantAudioEngine {
-			engine.outputNode.removeTap(onBus: 0)
+			engine.mainMixerNode.removeTap(onBus: 0)
 			engine.stop()
 		}
 		
