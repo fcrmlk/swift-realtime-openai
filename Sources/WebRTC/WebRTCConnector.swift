@@ -17,7 +17,6 @@ import FoundationNetworking
 		case failedToSetLocalDescription(Swift.Error)
 		case failedToSetRemoteDescription(Swift.Error)
 	}
-
 	public let events: AsyncThrowingStream<ServerEvent, Error>
 	@MainActor public private(set) var status = RealtimeAPI.Status.disconnected
 
@@ -28,7 +27,6 @@ import FoundationNetworking
 	package let audioTrack: LKRTCAudioTrack
 	private let dataChannel: LKRTCDataChannel
 	private let connection: LKRTCPeerConnection
-
 	private let stream: AsyncThrowingStream<ServerEvent, Error>.Continuation
 
 	private static let factory: LKRTCPeerConnectionFactory = {
@@ -73,7 +71,7 @@ import FoundationNetworking
 		}
 
 		try await performHandshake(using: request)
-        Self.configureAudioSession()
+//        Self.configureAudioSession()
 	}
 
 	public func send(event: ClientEvent) throws {
@@ -105,7 +103,6 @@ extension WebRTCConnector {
 		) else { throw WebRTCError.failedToCreatePeerConnection }
 
 		let audioTrack = Self.setupLocalAudio(for: connection)
-
 		guard let dataChannel = connection.dataChannel(forLabel: "oai-events", configuration: LKRTCDataChannelConfiguration()) else {
 			throw WebRTCError.failedToCreateDataChannel
 		}
@@ -138,7 +135,7 @@ private extension WebRTCConnector {
             #else
             try audioSession.setCategory(.playAndRecord, options: [.defaultToSpeaker])
             #endif
-            try audioSession.setMode(.videoChat)
+            try audioSession.setMode(.voiceChat)
             try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             print("Failed to configure AVAudioSession: \(error)")
