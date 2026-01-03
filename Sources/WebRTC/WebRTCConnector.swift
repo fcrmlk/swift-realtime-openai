@@ -71,7 +71,7 @@ import FoundationNetworking
 		}
 
 		try await performHandshake(using: request)
-//        Self.configureAudioSession()
+        Self.configureAudioSession()
 	}
 
 	public func send(event: ClientEvent) throws {
