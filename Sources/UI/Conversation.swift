@@ -196,6 +196,7 @@ private extension Conversation {
             if let sessionUpdateCallback { try updateSession(withChanges: sessionUpdateCallback) }
         case let .sessionUpdated(_, session):
             self.session = session
+            print(session)
         case let .conversationItemAdded(_, item, nil):
             entries.append(item)
         case let .conversationItemAdded(_, item, previousItemId?):
