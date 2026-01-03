@@ -263,6 +263,7 @@ private extension Conversation {
         case let .responseOutputAudioDelta(_, _, itemId, _, contentIndex, delta):
             updateEvent(id: itemId) { message in
                 guard case let .audio(audio) = message.content[contentIndex] else { return }
+                print("\n\n\n-------Code from Library -------\n",audio.audio?.data as Any,"\n\n\n-------------\n\n\n")
                 message.content[contentIndex] = .audio(.init(audio: (audio.audio?.data ?? Data()) + delta.data, transcript: audio.transcript))
             }
         case let .conversationItemInputAudioTranscriptionDelta(_, itemId, contentIndex, delta, _):
